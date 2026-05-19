@@ -1,40 +1,42 @@
-# Daily cartoon shorts pipeline.
-# Runs on GitHub's free infrastructure — your laptop never has to be on.
-#
-# Schedule: 21:30 UTC daily = 3:00 AM IST (India). Adjust the cron below
-# for your timezone. Use https://crontab.guru/ to convert.
-
 name: Daily Cartoon Shorts
 
 on:
   schedule:
-    - cron: '30 21 * * *'   # daily at 21:30 UTC (3:00 AM IST)
+    - cron: '30 21 * * *'
 
-  # Lets you trigger it manually from the Actions tab whenever you want
   workflow_dispatch:
     inputs:
       count:
-        description: 'How many videos to make'
+        description: How many videos to make
         default: '5'
         type: string
       topic:
-        description: 'Override topic (leave empty to use today\'s topic from topics.txt)'
+        description: Override topic (leave empty to use todays topic from topics.txt)
         default: ''
         type: string
       style:
-        description: 'Cartoon style'
-        default: 'adult_cartoon'
+        description: Cartoon style
+        default: adult_cartoon
         type: choice
-        options: [adult_cartoon, adult_scifi, pixar, anime, cartoon, disney, comic, noir, claymation]
+        options:
+          - adult_cartoon
+          - adult_scifi
+          - pixar
+          - anime
+          - cartoon
+          - disney
+          - comic
+          - noir
+          - claymation
       upload:
-        description: 'Upload to YouTube after building'
+        description: Upload to YouTube after building
         default: true
         type: boolean
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 350    # GitHub's max is 360. We give ourselves plenty.
+    timeout-minutes: 350
 
     steps:
       - uses: actions/checkout@v4
@@ -68,18 +70,16 @@ jobs:
           pip install -r requirements.txt
 
       - name: Restore YouTube credentials from secrets
-        if: ${{ inputs.upload != 'false' }}
         env:
           CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           TOKEN: ${{ secrets.YOUTUBE_TOKEN }}
         run: |
           if [ -z "$CLIENT_SECRET" ] || [ -z "$TOKEN" ]; then
             echo "::warning::YouTube secrets not set. Videos will be built but not uploaded."
-            echo "Set YOUTUBE_CLIENT_SECRET and YOUTUBE_TOKEN in repo Settings > Secrets."
           else
             printf '%s' "$CLIENT_SECRET" > client_secret.json
             printf '%s' "$TOKEN" > token.json
-            echo "✓ Credentials restored"
+            echo "Credentials restored"
           fi
 
       - name: Run autopilot
