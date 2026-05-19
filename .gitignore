@@ -1,0 +1,30 @@
+# NEVER commit these — they're live credentials
+client_secret.json
+token.json
+CLOUD_SECRETS_PASTE_INTO_GITHUB.txt
+*.token
+
+# Build artifacts (don't fill the repo with binaries)
+output/*.mp4
+output/*.json
+output/uploaded/
+temp/
+autopilot.log
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
