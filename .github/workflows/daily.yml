@@ -1,0 +1,116 @@
+# Daily cartoon shorts pipeline.
+# Runs on GitHub's free infrastructure — your laptop never has to be on.
+#
+# Schedule: 21:30 UTC daily = 3:00 AM IST (India). Adjust the cron below
+# for your timezone. Use https://crontab.guru/ to convert.
+
+name: Daily Cartoon Shorts
+
+on:
+  schedule:
+    - cron: '30 21 * * *'   # daily at 21:30 UTC (3:00 AM IST)
+
+  # Lets you trigger it manually from the Actions tab whenever you want
+  workflow_dispatch:
+    inputs:
+      count:
+        description: 'How many videos to make'
+        default: '5'
+        type: string
+      topic:
+        description: 'Override topic (leave empty to use today\'s topic from topics.txt)'
+        default: ''
+        type: string
+      style:
+        description: 'Cartoon style'
+        default: 'adult_cartoon'
+        type: choice
+        options: [adult_cartoon, adult_scifi, pixar, anime, cartoon, disney, comic, noir, claymation]
+      upload:
+        description: 'Upload to YouTube after building'
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350    # GitHub's max is 360. We give ourselves plenty.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu fonts-liberation
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-${{ runner.os }}-
+
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/whisper
+          key: whisper-base-v1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore YouTube credentials from secrets
+        if: ${{ inputs.upload != 'false' }}
+        env:
+          CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          TOKEN: ${{ secrets.YOUTUBE_TOKEN }}
+        run: |
+          if [ -z "$CLIENT_SECRET" ] || [ -z "$TOKEN" ]; then
+            echo "::warning::YouTube secrets not set. Videos will be built but not uploaded."
+            echo "Set YOUTUBE_CLIENT_SECRET and YOUTUBE_TOKEN in repo Settings > Secrets."
+          else
+            printf '%s' "$CLIENT_SECRET" > client_secret.json
+            printf '%s' "$TOKEN" > token.json
+            echo "✓ Credentials restored"
+          fi
+
+      - name: Run autopilot
+        run: |
+          COUNT="${{ inputs.count || '5' }}"
+          TOPIC="${{ inputs.topic || '' }}"
+          STYLE="${{ inputs.style || 'adult_cartoon' }}"
+          UPLOAD="${{ inputs.upload || 'true' }}"
+
+          ARGS="--count $COUNT --style $STYLE"
+          if [ "$UPLOAD" = "true" ] && [ -f client_secret.json ] && [ -f token.json ]; then
+            ARGS="$ARGS --upload"
+          fi
+          if [ -n "$TOPIC" ]; then
+            ARGS="$ARGS --topic \"$TOPIC\""
+          fi
+
+          echo "Running: python autopilot.py $ARGS"
+          eval python autopilot.py $ARGS
+
+      - name: Upload run logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autopilot-log-${{ github.run_number }}
+          path: |
+            autopilot.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Cleanup credentials
+        if: always()
+        run: |
+          rm -f client_secret.json token.json
