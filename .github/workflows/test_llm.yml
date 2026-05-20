@@ -1,0 +1,75 @@
+name: Test LLM Failover Only
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Test LLM providers
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+        run: |
+          echo "=== Keys present? ==="
+          python -c "import os; print('GROQ:', 'YES' if os.environ.get('GROQ_API_KEY') else 'NO')"
+          python -c "import os; print('GEMINI:', 'YES' if os.environ.get('GEMINI_API_KEY') else 'NO')"
+          python -c "import os; print('CEREBRAS:', 'YES' if os.environ.get('CEREBRAS_API_KEY') else 'NO')"
+
+          echo ""
+          echo "=== Test 1: generate_script (with length_seconds) ==="
+          python -c "
+          import logging
+          logging.basicConfig(level=logging.DEBUG, format='%(message)s')
+          from pollinations_llm import generate_script
+          result = generate_script('a cat who learned to drive', length_seconds=30)
+          print('---SCRIPT---')
+          print(result)
+          print('---END---')
+          assert result, 'generate_script returned None!'
+          print('✅ generate_script works')
+          "
+
+          echo ""
+          echo "=== Test 2: generate_script (with max_seconds) ==="
+          python -c "
+          from pollinations_llm import generate_script
+          result = generate_script('haunted vending machine', max_seconds=30)
+          assert result, 'generate_script with max_seconds returned None!'
+          print('✅ max_seconds param also works')
+          "
+
+          echo ""
+          echo "=== Test 3: enhance_visual_prompt ==="
+          python -c "
+          from pollinations_llm import enhance_visual_prompt
+          result = enhance_visual_prompt('The cat wore tiny sunglasses and held the steering wheel.', 'Family Guy style')
+          print('---PROMPT---')
+          print(result)
+          print('---END---')
+          assert result, 'enhance_visual_prompt returned None!'
+          print('✅ enhance_visual_prompt works')
+          "
+
+          echo ""
+          echo "=== Test 4: ask (raw API) ==="
+          python -c "
+          from pollinations_llm import ask
+          result = ask('Say hello in 3 words.')
+          print('Response:', result)
+          assert result, 'ask returned None!'
+          print('✅ ask works')
+          "
+
+          echo ""
+          echo "🎉 ALL LLM TESTS PASSED"
