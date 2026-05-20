@@ -77,11 +77,9 @@ jobs:
           if [ -z "$CLIENT_SECRET" ] || [ -z "$TOKEN" ]; then
             echo "::warning::YouTube secrets not set. Videos will be built but not uploaded."
           else
-
-            echo "$CLIENT_SECRET" > client_secret.json
-            echo "$TOKEN" > token.json
-            
-            echo "Credentials restored"
+            python -c "import os; open('client_secret.json','w').write(os.environ['CLIENT_SECRET'])"
+            python -c "import os; open('token.json','w').write(os.environ['TOKEN'])"
+            python -c "import json; json.load(open('client_secret.json')); json.load(open('token.json')); print('Credentials restored and validated as JSON')"
           fi
 
       - name: Run autopilot
