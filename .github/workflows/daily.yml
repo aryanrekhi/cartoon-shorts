@@ -77,8 +77,10 @@ jobs:
           if [ -z "$CLIENT_SECRET" ] || [ -z "$TOKEN" ]; then
             echo "::warning::YouTube secrets not set. Videos will be built but not uploaded."
           else
-            printf '%s' "$CLIENT_SECRET" > client_secret.json
-            printf '%s' "$TOKEN" > token.json
+
+            echo "$CLIENT_SECRET" > client_secret.json
+            echo "$TOKEN" > token.json
+            
             echo "Credentials restored"
           fi
 
