@@ -204,7 +204,7 @@ def ask(prompt, system=None, max_retries=2):
 
 # ---------- Backward compatibility helpers ----------
 
-def enhance_visual_prompt(narration_text, style_hint=""):
+def enhance_visual_prompt(narration_text, style_hint="", topic_hint=None, **kwargs):
     """
     Convert narration text into a vivid visual prompt for image generation.
     Falls back to a clean version of the input if all LLMs fail.
@@ -212,10 +212,18 @@ def enhance_visual_prompt(narration_text, style_hint=""):
     Args:
         narration_text: the text being narrated (one sentence usually)
         style_hint: optional cartoon style descriptor (e.g. "Family Guy style")
+        topic_hint: optional topic context (alias accepted for backward compat)
+        **kwargs: silently absorbs any other unexpected params
 
     Returns:
         a visual prompt string suitable for Flux/Pollinations image generation
     """
+    # Accept topic_hint as alias - blend into style_hint if provided
+    if topic_hint and not style_hint:
+        style_hint = topic_hint
+    elif topic_hint:
+        style_hint = f"{topic_hint}, {style_hint}"
+
     if not narration_text or not narration_text.strip():
         return style_hint or "cinematic illustration"
 
