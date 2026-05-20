@@ -195,6 +195,78 @@ def ask(prompt, system=None, max_retries=2):
     return None
 
 
+# ---------- Backward compatibility helpers ----------
+
+def enhance_visual_prompt(narration_text, style_hint=""):
+    """
+    Convert narration text into a vivid visual prompt for image generation.
+    Falls back to a clean version of the input if all LLMs fail.
+
+    Args:
+        narration_text: the text being narrated (one sentence usually)
+        style_hint: optional cartoon style descriptor (e.g. "Family Guy style")
+
+    Returns:
+        a visual prompt string suitable for Flux/Pollinations image generation
+    """
+    if not narration_text or not narration_text.strip():
+        return style_hint or "cinematic illustration"
+
+    system = (
+        "You are a visual prompt engineer for an AI image generator. "
+        "Given a sentence of narration, write ONE concise visual prompt (max 30 words) "
+        "describing what to SHOW on screen. Be vivid, specific, and visual. "
+        "Focus on subject, action, setting, mood, lighting. No quotes or explanations - "
+        "just the prompt itself."
+    )
+    user_prompt = f"Narration: {narration_text.strip()}\n\nStyle hint: {style_hint}\n\nVisual prompt:"
+
+    result = ask(user_prompt, system=system, max_retries=1)
+    if result:
+        # Clean up: take first line only, strip quotes
+        first_line = result.split("\n")[0].strip().strip('"').strip("'")
+        if first_line:
+            return first_line if not style_hint else f"{first_line}, {style_hint}"
+
+    # Fallback: use the narration directly with style hint
+    fallback = narration_text.strip()[:200]
+    return f"{fallback}, {style_hint}" if style_hint else fallback
+
+
+def generate_script(topic, max_seconds=55):
+    """
+    Generate a YouTube Short narration script for a given topic.
+    Returns None if all providers fail.
+
+    Args:
+        topic: the topic to write about
+        max_seconds: target video length
+
+    Returns:
+        a narration script string, or None if generation failed
+    """
+    word_target = int(max_seconds * 2.5)  # ~2.5 words/sec narration pace
+
+    system = (
+        "You are a viral short-form video scriptwriter. Write narration scripts that:\n"
+        "- Hook the viewer in the first sentence\n"
+        "- Use SHORT sentences (under 12 words each)\n"
+        "- Have clear punctuation - period at end of every sentence\n"
+        "- Build tension across the script\n"
+        "- End with a memorable closing line\n"
+        "- No emojis, no stage directions, no music cues - just spoken narration\n"
+        "- Write ONLY what the narrator says aloud"
+    )
+    prompt = (
+        f"Write a {word_target}-word narration script about: {topic}\n\n"
+        f"Target length: {max_seconds} seconds of speech. "
+        "Remember: short sentences with clear periods. One idea per sentence. "
+        "Make it captivating from word one."
+    )
+
+    return ask(prompt, system=system, max_retries=2)
+
+
 # ---------- Self-test ----------
 
 if __name__ == "__main__":
@@ -209,6 +281,13 @@ if __name__ == "__main__":
     for k, v in test_keys.items():
         print(f"  {k}: {v}")
 
-    print("\nAsking each provider for a short story...")
-    result = ask("Write a 2-sentence story about a cat learning to fly.", system="You are a creative storyteller.")
-    print(f"\nResult:\n{result}")
+    print("\n=== Test 1: generate_script ===")
+    script = generate_script("a haunted vending machine in a Tokyo subway", max_seconds=45)
+    print(f"\n{script}\n")
+
+    print("\n=== Test 2: enhance_visual_prompt ===")
+    vp = enhance_visual_prompt(
+        "The vending machine glowed an unnatural blue at 3am.",
+        style_hint="Family Guy adult cartoon style",
+    )
+    print(f"\n{vp}\n")
