@@ -83,6 +83,10 @@ jobs:
           fi
 
       - name: Run autopilot
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
         run: |
           COUNT="${{ inputs.count || '5' }}"
           TOPIC="${{ inputs.topic || '' }}"
