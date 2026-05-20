@@ -31,8 +31,8 @@ GEMINI_MODELS = [
 ]
 
 CEREBRAS_MODELS = [
-    "llama-3.3-70b",
     "llama3.1-8b",
+    "llama-3.3-70b",  # may 404, kept as second attempt in case Cerebras enables later
 ]
 
 POLLINATIONS_MODELS = ["openai", "mistral", "qwen-coder"]
