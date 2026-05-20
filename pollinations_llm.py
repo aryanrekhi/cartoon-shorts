@@ -248,7 +248,7 @@ def enhance_visual_prompt(narration_text, style_hint="", topic_hint=None, **kwar
     return f"{fallback}, {style_hint}" if style_hint else fallback
 
 
-def generate_script(topic, max_seconds=55, length_seconds=None, **kwargs):
+def generate_script(topic, max_seconds=55, length_seconds=None, attempt_label=None, **kwargs):
     """
     Generate a YouTube Short narration script for a given topic.
     Returns None if all providers fail.
@@ -257,6 +257,8 @@ def generate_script(topic, max_seconds=55, length_seconds=None, **kwargs):
         topic: the topic to write about
         max_seconds: target video length (alias: length_seconds)
         length_seconds: alternate name for max_seconds (backward compat)
+        attempt_label: optional label for logging (e.g. "Script 1/5")
+        **kwargs: silently absorbs any other unexpected params
 
     Returns:
         a narration script string, or None if generation failed
@@ -264,6 +266,9 @@ def generate_script(topic, max_seconds=55, length_seconds=None, **kwargs):
     # Accept either parameter name
     if length_seconds is not None:
         max_seconds = length_seconds
+
+    if attempt_label:
+        log.debug(f"  [{attempt_label}]")
 
     word_target = int(max_seconds * 2.5)  # ~2.5 words/sec narration pace
 
