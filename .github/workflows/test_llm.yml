@@ -15,60 +15,56 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Test each provider in pollinations_llm.py
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+      - name: AUDIT - find all calls to pollinations_llm functions
         run: |
+          echo "============================================================"
+          echo "Listing every call to functions from pollinations_llm.py"
+          echo "============================================================"
           python << 'EOF'
-          import logging
-          logging.basicConfig(level=logging.DEBUG, format="%(message)s")
-          from pollinations_llm import _try_groq, _try_gemini, _try_cerebras, _try_pollinations
+          import re
+          from pathlib import Path
 
-          test_prompt = "Say 'hello world' in exactly 3 words."
+          # functions defined in pollinations_llm.py
+          func_names = ["ask", "generate_script", "enhance_visual_prompt"]
 
-          print("="*70)
-          print("Testing GROQ via pollinations_llm._try_groq")
-          print("="*70)
-          result = _try_groq(test_prompt)
-          if result:
-              print(f"✅ GROQ WORKS: {result[:100]}")
-          else:
-              print("❌ GROQ failed (see debug logs above)")
+          py_files = [p for p in Path(".").rglob("*.py") if "pollinations_llm.py" not in str(p)]
 
-          print()
-          print("="*70)
-          print("Testing GEMINI via pollinations_llm._try_gemini")
-          print("="*70)
-          result = _try_gemini(test_prompt)
-          if result:
-              print(f"✅ GEMINI WORKS: {result[:100]}")
-          else:
-              print("❌ GEMINI failed (see debug logs above)")
+          for fname in func_names:
+              print(f"\n--- Calls to {fname}() ---")
+              found_any = False
+              for pyf in py_files:
+                  try:
+                      lines = pyf.read_text(encoding="utf-8").split("\n")
+                  except Exception:
+                      continue
+                  for i, line in enumerate(lines, 1):
+                      if re.search(rf"\b{fname}\s*\(", line):
+                          # capture multi-line call if needed
+                          call = line
+                          j = i
+                          while call.count("(") > call.count(")") and j < len(lines):
+                              call += " " + lines[j].strip()
+                              j += 1
+                          # extract kwargs
+                          kwargs = re.findall(r"(\w+)\s*=", call.split("(", 1)[1] if "(" in call else "")
+                          # filter only real kwargs (not = inside strings/numbers)
+                          print(f"  {pyf}:{i}")
+                          print(f"    line: {line.strip()[:120]}")
+                          if kwargs:
+                              print(f"    kwargs used: {kwargs}")
+                          found_any = True
+              if not found_any:
+                  print(f"  (no calls found)")
 
-          print()
-          print("="*70)
-          print("Testing CEREBRAS via pollinations_llm._try_cerebras")
-          print("="*70)
-          result = _try_cerebras(test_prompt)
-          if result:
-              print(f"✅ CEREBRAS WORKS: {result[:100]}")
-          else:
-              print("❌ CEREBRAS failed (see debug logs above)")
-
-          print()
-          print("="*70)
-          print("Testing POLLINATIONS via pollinations_llm._try_pollinations")
-          print("="*70)
-          result = _try_pollinations(test_prompt)
-          if result:
-              print(f"✅ POLLINATIONS WORKS: {result[:100]}")
-          else:
-              print("❌ POLLINATIONS failed (see debug logs above)")
-
-          print()
-          print("="*70)
-          print("SUMMARY: provider count working = check output above")
-          print("="*70)
+          # Also show what each function currently accepts
+          print("\n============================================================")
+          print("CURRENT SIGNATURES in pollinations_llm.py")
+          print("============================================================")
+          import inspect
+          import pollinations_llm
+          for fname in func_names:
+              if hasattr(pollinations_llm, fname):
+                  fn = getattr(pollinations_llm, fname)
+                  sig = inspect.signature(fn)
+                  print(f"  {fname}{sig}")
           EOF
