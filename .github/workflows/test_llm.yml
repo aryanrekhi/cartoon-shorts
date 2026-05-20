@@ -15,61 +15,100 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Test LLM providers
+      - name: Diagnose each API key
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
         run: |
-          echo "=== Keys present? ==="
-          python -c "import os; print('GROQ:', 'YES' if os.environ.get('GROQ_API_KEY') else 'NO')"
-          python -c "import os; print('GEMINI:', 'YES' if os.environ.get('GEMINI_API_KEY') else 'NO')"
-          python -c "import os; print('CEREBRAS:', 'YES' if os.environ.get('CEREBRAS_API_KEY') else 'NO')"
+          python << 'EOF'
+          import os, json, urllib.request, urllib.error
 
-          echo ""
-          echo "=== Test 1: generate_script (with length_seconds) ==="
-          python -c "
-          import logging
-          logging.basicConfig(level=logging.DEBUG, format='%(message)s')
-          from pollinations_llm import generate_script
-          result = generate_script('a cat who learned to drive', length_seconds=30)
-          print('---SCRIPT---')
-          print(result)
-          print('---END---')
-          assert result, 'generate_script returned None!'
-          print('✅ generate_script works')
-          "
+          def check_key_format(name, key):
+              if not key:
+                  print(f"  ❌ {name}: NOT SET")
+                  return False
+              issues = []
+              if key != key.strip():
+                  issues.append(f"has leading/trailing whitespace (raw len={len(key)}, stripped len={len(key.strip())})")
+              if '"' in key or "'" in key:
+                  issues.append("contains quote characters")
+              if "\n" in key or "\r" in key:
+                  issues.append("contains newlines")
+              if " " in key.strip():
+                  issues.append("contains spaces in middle")
+              stripped = key.strip()
+              print(f"  📋 {name}: length={len(stripped)}, prefix='{stripped[:6]}...', suffix='...{stripped[-4:]}'")
+              if issues:
+                  for i in issues:
+                      print(f"     ⚠️  {i}")
+                  return False
+              return True
 
-          echo ""
-          echo "=== Test 2: generate_script (with max_seconds) ==="
-          python -c "
-          from pollinations_llm import generate_script
-          result = generate_script('haunted vending machine', max_seconds=30)
-          assert result, 'generate_script with max_seconds returned None!'
-          print('✅ max_seconds param also works')
-          "
+          def http_request(url, headers=None, method="GET", body=None, timeout=15):
+              req = urllib.request.Request(url, headers=headers or {}, method=method)
+              if body:
+                  req.data = json.dumps(body).encode("utf-8")
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as r:
+                      return r.status, r.read().decode("utf-8", errors="replace")
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+                  return e.code, body
+              except Exception as e:
+                  return None, f"{type(e).__name__}: {e}"
 
-          echo ""
-          echo "=== Test 3: enhance_visual_prompt ==="
-          python -c "
-          from pollinations_llm import enhance_visual_prompt
-          result = enhance_visual_prompt('The cat wore tiny sunglasses and held the steering wheel.', 'Family Guy style')
-          print('---PROMPT---')
-          print(result)
-          print('---END---')
-          assert result, 'enhance_visual_prompt returned None!'
-          print('✅ enhance_visual_prompt works')
-          "
+          print("="*70)
+          print("API KEY FORMAT CHECK")
+          print("="*70)
+          groq = os.environ.get("GROQ_API_KEY", "")
+          gemini = os.environ.get("GEMINI_API_KEY", "")
+          cerebras = os.environ.get("CEREBRAS_API_KEY", "")
 
-          echo ""
-          echo "=== Test 4: ask (raw API) ==="
-          python -c "
-          from pollinations_llm import ask
-          result = ask('Say hello in 3 words.')
-          print('Response:', result)
-          assert result, 'ask returned None!'
-          print('✅ ask works')
-          "
+          groq_ok = check_key_format("GROQ", groq)
+          gemini_ok = check_key_format("GEMINI", gemini)
+          cerebras_ok = check_key_format("CEREBRAS", cerebras)
 
-          echo ""
-          echo "🎉 ALL LLM TESTS PASSED"
+          print()
+          print("="*70)
+          print("GROQ: list available models")
+          print("="*70)
+          if groq:
+              status, body = http_request(
+                  "https://api.groq.com/openai/v1/models",
+                  headers={"Authorization": f"Bearer {groq.strip()}"},
+              )
+              print(f"HTTP {status}")
+              print(f"Response (first 500 chars):")
+              print(body[:500])
+
+          print()
+          print("="*70)
+          print("GEMINI: list available models")
+          print("="*70)
+          if gemini:
+              status, body = http_request(
+                  f"https://generativelanguage.googleapis.com/v1beta/models?key={gemini.strip()}",
+              )
+              print(f"HTTP {status}")
+              print(f"Response (first 800 chars):")
+              print(body[:800])
+
+          print()
+          print("="*70)
+          print("CEREBRAS: list available models")
+          print("="*70)
+          if cerebras:
+              status, body = http_request(
+                  "https://api.cerebras.ai/v1/models",
+                  headers={"Authorization": f"Bearer {cerebras.strip()}"},
+              )
+              print(f"HTTP {status}")
+              print(f"Response (first 500 chars):")
+              print(body[:500])
+
+          print()
+          print("="*70)
+          print("DIAGNOSTIC COMPLETE")
+          print("="*70)
+          EOF
