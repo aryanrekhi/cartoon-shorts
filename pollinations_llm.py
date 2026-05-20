@@ -41,6 +41,13 @@ POLLINATIONS_MODELS = ["openai", "mistral", "qwen-coder"]
 
 def _http_post_json(url, payload, headers, timeout=45):
     """POST JSON, return parsed response or raise."""
+    # Add browser-like User-Agent to bypass Cloudflare protection on Groq/Cerebras
+    headers = dict(headers or {})
+    headers.setdefault(
+        "User-Agent",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    )
+    headers.setdefault("Accept", "application/json")
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
