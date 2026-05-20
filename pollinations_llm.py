@@ -1,104 +1,214 @@
 """
-Free LLM helper using Pollinations text API.
-Used to:
-  • Convert narration scenes into proper visual prompts for image generation
-  • Auto-generate fresh YouTube Shorts scripts on a topic
+Multi-LLM failover client.
 
-Includes polite rate-limiting so we don't get throttled by the free service.
+Tries providers in order: Groq -> Gemini -> Cerebras -> Pollinations (free fallback).
+Each has independent rate limits, so combined effective limit is much higher.
+
+Original name kept as 'pollinations_llm.py' to avoid changing imports elsewhere.
 """
 
-import re
+import os
 import time
-from urllib.parse import quote_plus
+import json
+import random
+import logging
+import urllib.parse
+import urllib.request
+import urllib.error
 
-import requests
+log = logging.getLogger(__name__)
 
-TEXT_URL = "https://text.pollinations.ai/{prompt}?model={model}&private=true"
+# ---------- Provider configurations ----------
 
-# Rate limiting — wait at least this long between any two LLM calls
-MIN_DELAY_BETWEEN_CALLS = 4.0  # seconds
-_last_call_time = [0.0]  # mutable list so we can track across function calls
+GROQ_MODELS = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+]
 
+GEMINI_MODELS = [
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash",
+]
 
-def _wait_for_rate_limit():
-    """Make sure we don't hammer Pollinations faster than it tolerates."""
-    elapsed = time.time() - _last_call_time[0]
-    if elapsed < MIN_DELAY_BETWEEN_CALLS:
-        sleep_for = MIN_DELAY_BETWEEN_CALLS - elapsed
-        time.sleep(sleep_for)
-    _last_call_time[0] = time.time()
+CEREBRAS_MODELS = [
+    "llama-3.3-70b",
+    "llama3.1-8b",
+]
 
+POLLINATIONS_MODELS = ["openai", "mistral", "qwen-coder"]
 
-def call_llm(prompt, model="openai", timeout=60, retries=4):
-    """Call Pollinations free LLM. Returns response text or None on failure.
-    Uses exponential backoff on retries to be polite to the free service."""
-    encoded = quote_plus(prompt)
-    url = TEXT_URL.format(prompt=encoded, model=model)
-    for attempt in range(retries + 1):
-        _wait_for_rate_limit()
+# ---------- HTTP helper ----------
+
+def _http_post_json(url, payload, headers, timeout=45):
+    """POST JSON, return parsed response or raise."""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+def _http_get(url, timeout=45):
+    """GET text, return response text or raise."""
+    req = urllib.request.Request(url, headers={"User-Agent": "cartoon-shorts/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode("utf-8")
+
+# ---------- Provider implementations ----------
+
+def _try_groq(prompt, system=None):
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not key:
+        return None
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    for model in GROQ_MODELS:
         try:
-            r = requests.get(url, timeout=timeout)
-            if r.status_code == 200 and r.text.strip():
-                return r.text.strip()
-            if r.status_code == 429:
-                # Rate limited — wait longer
-                wait = 10 * (attempt + 1)
-                print(f"    (rate limited, waiting {wait}s)", flush=True)
-                time.sleep(wait)
+            resp = _http_post_json(
+                "https://api.groq.com/openai/v1/chat/completions",
+                {"model": model, "messages": messages, "temperature": 0.8, "max_tokens": 800},
+                {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                timeout=30,
+            )
+            text = resp["choices"][0]["message"]["content"].strip()
+            if text:
+                log.debug(f"  groq/{model} ok ({len(text)} chars)")
+                return text
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                log.debug(f"  groq/{model} rate-limited")
                 continue
+            log.debug(f"  groq/{model} HTTP {e.code}")
         except Exception as e:
-            if attempt == retries:
-                print(f"    (LLM call failed: {e})", flush=True)
-        # Exponential backoff before next attempt
-        wait = 3 * (2 ** attempt)
-        time.sleep(min(wait, 30))
+            log.debug(f"  groq/{model} {type(e).__name__}: {e}")
+    return None
+
+def _try_gemini(prompt, system=None):
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key:
+        return None
+    text_prompt = prompt if not system else f"{system}\n\n{prompt}"
+    for model in GEMINI_MODELS:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+            payload = {
+                "contents": [{"parts": [{"text": text_prompt}]}],
+                "generationConfig": {"temperature": 0.8, "maxOutputTokens": 800},
+            }
+            resp = _http_post_json(
+                url, payload, {"Content-Type": "application/json"}, timeout=30
+            )
+            text = resp["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if text:
+                log.debug(f"  gemini/{model} ok ({len(text)} chars)")
+                return text
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                log.debug(f"  gemini/{model} rate-limited")
+                continue
+            log.debug(f"  gemini/{model} HTTP {e.code}")
+        except Exception as e:
+            log.debug(f"  gemini/{model} {type(e).__name__}: {e}")
+    return None
+
+def _try_cerebras(prompt, system=None):
+    key = os.environ.get("CEREBRAS_API_KEY", "").strip()
+    if not key:
+        return None
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    for model in CEREBRAS_MODELS:
+        try:
+            resp = _http_post_json(
+                "https://api.cerebras.ai/v1/chat/completions",
+                {"model": model, "messages": messages, "temperature": 0.8, "max_tokens": 800},
+                {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                timeout=30,
+            )
+            text = resp["choices"][0]["message"]["content"].strip()
+            if text:
+                log.debug(f"  cerebras/{model} ok ({len(text)} chars)")
+                return text
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                log.debug(f"  cerebras/{model} rate-limited")
+                continue
+            log.debug(f"  cerebras/{model} HTTP {e.code}")
+        except Exception as e:
+            log.debug(f"  cerebras/{model} {type(e).__name__}: {e}")
+    return None
+
+def _try_pollinations(prompt, system=None):
+    """Pollinations free text API - last resort fallback."""
+    text_prompt = prompt if not system else f"{system}\n\n{prompt}"
+    encoded = urllib.parse.quote(text_prompt[:1500])
+    for model in POLLINATIONS_MODELS:
+        for attempt in range(2):
+            try:
+                url = f"https://text.pollinations.ai/{encoded}?model={model}"
+                text = _http_get(url, timeout=45).strip()
+                if text and len(text) > 50:
+                    log.debug(f"  pollinations/{model} ok ({len(text)} chars)")
+                    return text
+            except Exception as e:
+                log.debug(f"  pollinations/{model} attempt {attempt+1} {type(e).__name__}")
+                time.sleep(2 + random.random() * 2)
+    return None
+
+# ---------- Public API ----------
+
+PROVIDERS = [
+    ("groq", _try_groq),
+    ("gemini", _try_gemini),
+    ("cerebras", _try_cerebras),
+    ("pollinations", _try_pollinations),
+]
+
+def ask(prompt, system=None, max_retries=2):
+    """
+    Try each LLM provider in sequence. Returns the first non-empty response.
+
+    Args:
+        prompt: user prompt
+        system: optional system message
+        max_retries: number of full passes through all providers
+
+    Returns:
+        response text, or None if all providers failed
+    """
+    for cycle in range(max_retries):
+        if cycle > 0:
+            wait = 2 + cycle * 3
+            log.info(f"  retry cycle {cycle+1} in {wait}s...")
+            time.sleep(wait)
+        for name, fn in PROVIDERS:
+            try:
+                result = fn(prompt, system=system)
+                if result:
+                    log.debug(f"  [provider: {name}]")
+                    return result
+            except Exception as e:
+                log.debug(f"  {name} crashed: {type(e).__name__}: {e}")
+    log.warning("  All providers exhausted")
     return None
 
 
-def enhance_visual_prompt(scene_text, topic_hint=""):
-    """Convert narration into a vivid visual prompt for image generation."""
-    instruction = (
-        "You convert narration text into a single vivid visual scene description "
-        "for an AI image generator. Output ONLY one sentence, max 35 words. "
-        "Include: main subject, action, setting, mood, and lighting. "
-        "Be concrete and visual. No style words, no quotes, no preamble.\n\n"
-        f"Topic context: {topic_hint or 'general storytelling'}\n"
-        f"Narration: {scene_text}\n\n"
-        "Visual scene:"
-    )
-    result = call_llm(instruction)
-    if not result:
-        return scene_text
-    result = result.strip().strip('"\'').strip()
-    result = re.sub(
-        r"^(visual scene|visual prompt|scene|prompt|description|image)[\s:]+",
-        "", result, flags=re.IGNORECASE
-    )
-    result = result.split("\n")[0].strip()
-    if len(result) > 220:
-        result = result[:220]
-    return result or scene_text
+# ---------- Self-test ----------
 
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG, format="%(message)s")
 
-def generate_script(topic, length_seconds=40, attempt_label=""):
-    """Generate one fresh YouTube Shorts narration script on a topic."""
-    target_words = int(length_seconds * 2.4)
-    instruction = (
-        f"Write ONE original YouTube Shorts narration about: {topic}. "
-        f"Length: roughly {target_words} words. "
-        "Hook in first sentence. Build curiosity. End on a question. "
-        "Spell out numbers as words. Output ONLY the narration body, "
-        "no title, no markdown, no preamble, no quotation marks.\n"
-        f"{attempt_label}"
-    ).strip()
-    result = call_llm(instruction, timeout=90)
-    if not result:
-        return None
-    result = re.sub(
-        r"^(here[\'s]+ (is|the|a)|sure[,!]?|narration[\s:]+|script[\s:]+|title[\s:]+[^\n]*\n)",
-        "", result.strip(), flags=re.IGNORECASE
-    ).strip()
-    result = result.strip('"\'').strip()
-    if len(result) < 100 or len(result) > 1500:
-        return None
-    return result
+    test_keys = {
+        "GROQ_API_KEY": "present" if os.environ.get("GROQ_API_KEY") else "MISSING",
+        "GEMINI_API_KEY": "present" if os.environ.get("GEMINI_API_KEY") else "MISSING",
+        "CEREBRAS_API_KEY": "present" if os.environ.get("CEREBRAS_API_KEY") else "MISSING",
+    }
+    print("API keys:")
+    for k, v in test_keys.items():
+        print(f"  {k}: {v}")
+
+    print("\nAsking each provider for a short story...")
+    result = ask("Write a 2-sentence story about a cat learning to fly.", system="You are a creative storyteller.")
+    print(f"\nResult:\n{result}")
